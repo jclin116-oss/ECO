@@ -103,4 +103,84 @@ def get_moea_schedule(url, target_date_str):
                     
                     # 檢查是否為無行程文字
                     if "本日無公開行程" in title_text:
-                        #
+                        # 如果該類別之前已經記錄過具體行程，不轉為「無行程」
+                        if title not in has_real_schedule:
+                            categories_status[title] = {"時間": "-", "行程內容": "本日無公開行程", "地點": "-"}
+                        continue
+                    
+                    # 正常行程時間切分
+                    time_match = re.match(r'^(\d+:\d+\s*[APMpm]+|[上下]午\s*\d+:\d+)', title_text)
+                    if time_match:
+                        time_str = time_match.group(1)
+                        content_str = title_text.replace(time_str, "", 1).strip()
+                    else:
+                        time_str = "-"
+                        content_str = title_text
+                    
+                    # 3. 提取地點 (sch-place)
+                    place_tag = block.find(class_="sch-place")
+                    if place_tag:
+                        place_str = place_tag.get_text(strip=True).replace("地點：", "").strip()
+                    else:
+                        place_str = "-"
+                    
+                    # 填入實際行程資料（若同一類別有多筆行程，由新行程取代或可視需求改為 list，此處採單一覆蓋或初始化處理）
+                    # 若同類別有多筆，直接更新或擴充機制：
+                    if title not in has_real_schedule:
+                        categories_status[title] = {"時間": time_str, "行程內容": content_str, "地點": place_str}
+                        has_real_schedule.add(title)
+                    else:
+                        # 處理同類別當天有多筆行程的情況，將多筆行程資料整理合併成多列資料
+                        if not isinstance(categories_status[title], list):
+                            categories_status[title] = [categories_status[title]]
+                        categories_status[title].append({"時間": time_str, "行程內容": content_str, "地點": place_str})
+                        
+    except Exception as e:
+        st.error(f"解析網頁結構時發生錯誤: {str(e)}")
+        
+    # 將整理好的字典轉換為 DataFrame 格式所需的串列
+    final_rows = []
+    for cat in ["部長", "次長", "所屬單位記者會"]:
+        data = categories_status[cat]
+        if isinstance(data, list):
+            for item in data:
+                final_rows.append({
+                    "時間": item["時間"],
+                    "類別": cat,
+                    "行程內容": item["行程內容"],
+                    "地點": item["地點"]
+                })
+        else:
+            final_rows.append({
+                "時間": data["時間"],
+                "類別": cat,
+                "行程內容": data["行程內容"],
+                "地點": data["地點"]
+            })
+            
+    return final_rows
+
+
+# --- 主畫面排版 ---
+st.title("🏛️ 經濟部 - 行程解析工具")
+
+if start_search:
+    date_str = target_date.strftime("%Y-%m-%d")
+    target_url = "https://www.moea.gov.tw/Mns/populace/news/MinisterSchedule.aspx?menu_id=42225"
+    
+    with st.spinner(f"正在同步並解析 {date_str} 的經濟部行程資料..."):
+        results = get_moea_schedule(target_url, date_str)
+        
+        df = pd.DataFrame(results)
+        st.success(f"查詢成功！已完成 {date_str} 的行程解析。")
+        st.dataframe(df, use_container_width=True, hide_index=False)
+        
+        csv_data = df.to_csv(index=False, encoding="utf-8-sig")
+        st.download_button(
+            label="匯出此表格為 CSV",
+            data=csv_data,
+            file_name=f"經濟部行程_{date_str}.csv",
+            mime="text/csv"
+        )
+else:
+    st.info("請於左側設定抓取日期後，點擊「開始同步並篩選資料」按鈕。")
