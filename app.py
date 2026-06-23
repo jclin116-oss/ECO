@@ -28,7 +28,15 @@ def get_moea_schedule(url, target_date_str):
         "Referer": "https://www.moea.gov.tw/"
     }
 
-    scraped_data = []
+    # 初始化當天所有必須列出的預設類別字典，預設皆為無行程
+    categories_status = {
+        "部長": {"時間": "-", "行程內容": "本日無公開行程", "地點": "-"},
+        "次長": {"時間": "-", "行程內容": "本日無公開行程", "地點": "-"},
+        "所屬單位記者會": {"時間": "-", "行程內容": "本日無公開行程", "地點": "-"}
+    }
+    
+    # 用於紀錄網頁上實際有抓到具體行程的類別，避免被預設的「無公開行程」覆蓋
+    has_real_schedule = set()
     target_date_obj = datetime.strptime(target_date_str, "%Y-%m-%d")
 
     try:
@@ -69,10 +77,9 @@ def get_moea_schedule(url, target_date_str):
                 if current_date_str != target_date_str:
                     continue
                 
-                # 找出屬於該日期的所有行程區塊 <div class="divSch">（包含部長、次長、所屬單位記者會）
+                # 找出屬於該日期的所有行程區塊 <div class="divSch">
                 sch_blocks = day_container.find_all(class_="divSch")
                 if not sch_blocks:
-                    # 若因巢狀結構不在內部，則往後抓取同級節點
                     sibling = day_container.find_next_sibling()
                     while sibling and "divSch" in sibling.get("class", []):
                         sch_blocks.append(sibling)
@@ -80,9 +87,12 @@ def get_moea_schedule(url, target_date_str):
                 
                 # 逐一解析行程
                 for block in sch_blocks:
-                    # 1. 提取類別/官階 (minister-kind) -> 會抓到 "部長"、"次長" 或 "所屬單位記者會"
+                    # 1. 提取類別/官階 (minister-kind)
                     kind_tag = block.find(class_="minister-kind")
-                    title = kind_tag.get_text(strip=True) if kind_tag else "未知類別"
+                    title = kind_tag.get_text(strip=True) if kind_tag else None
+                    
+                    if not title or title not in categories_status:
+                        continue
                     
                     # 2. 提取時間與行程標題 (sch-title)
                     title_tag = block.find(class_="sch-title")
@@ -91,79 +101,6 @@ def get_moea_schedule(url, target_date_str):
                     
                     title_text = title_tag.get_text(strip=True)
                     
-                    # 處理「本日無公開行程」或是正常的行程時間切分
+                    # 檢查是否為無行程文字
                     if "本日無公開行程" in title_text:
-                        time_str = "-"
-                        content_str = "本日無公開行程"
-                    else:
-                        # 匹配時間格式，如 "4:00 PM" 或 "上午 09:00"
-                        time_match = re.match(r'^(\d+:\d+\s*[APMpm]+|[上下]午\s*\d+:\d+)', title_text)
-                        if time_match:
-                            time_str = time_match.group(1)
-                            content_str = title_text.replace(time_str, "", 1).strip()
-                        else:
-                            time_str = "-"
-                            content_str = title_text
-                    
-                    # 3. 提取地點 (sch-place) -> 獨立成欄位
-                    place_tag = block.find(class_="sch-place")
-                    if place_tag:
-                        place_str = place_tag.get_text(strip=True).replace("地點：", "").strip()
-                    else:
-                        place_str = "-"
-                        
-                    # 4. 提取說明備註 (sch-memo) -> 獨立成欄位
-                    memo_tag = block.find(class_="sch-memo")
-                    if memo_tag:
-                        memo_str = memo_tag.get_text(separator=" ", strip=True).replace("※說明：", "").strip()
-                    else:
-                        memo_str = "-"
-                    
-                    scraped_data.append({
-                        "時間": time_str,
-                        "類別": title,
-                        "行程內容": content_str,
-                        "地點": place_str,
-                        "備註說明": memo_str
-                    })
-                    
-    except Exception as e:
-        st.error(f"解析網頁結構時發生錯誤: {str(e)}")
-        
-    return scraped_data
-
-
-# --- 主畫面排版 ---
-st.title("🏛️ 經濟部 - 行程解析工具")
-
-if start_search:
-    date_str = target_date.strftime("%Y-%m-%d")
-    target_url = "https://www.moea.gov.tw/Mns/populace/news/MinisterSchedule.aspx?menu_id=42225"
-    
-    with st.spinner(f"正在同步並解析 {date_str} 的經濟部行程資料..."):
-        results = get_moea_schedule(target_url, date_str)
-        
-        if results:
-            df = pd.DataFrame(results)
-            st.success(f"查詢成功！已完成 {date_str} 的行程解析。")
-            st.dataframe(df, use_container_width=True, hide_index=False)
-            
-            csv_data = df.to_csv(index=False, encoding="utf-8-sig")
-            st.download_button(
-                label="匯出此表格為 CSV",
-                data=csv_data,
-                file_name=f"經濟部行程_{date_str}.csv",
-                mime="text/csv"
-            )
-        else:
-            df_empty = pd.DataFrame([{
-                "時間": "-",
-                "類別": "-",
-                "行程內容": "無公開行程",
-                "地點": "-",
-                "備註說明": "-"
-            }])
-            st.warning(f"於 {date_str} 未偵測到任何公開行程。")
-            st.dataframe(df_empty, use_container_width=True)
-else:
-    st.info("請於左側設定抓取日期後，點擊「開始同步並篩選資料」按鈕。")
+                        #
