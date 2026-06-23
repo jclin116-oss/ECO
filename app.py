@@ -140,4 +140,30 @@ if start_search:
     date_str = target_date.strftime("%Y-%m-%d")
     target_url = "https://www.moea.gov.tw/Mns/populace/news/MinisterSchedule.aspx?menu_id=42225"
     
-    with st.
+    with st.spinner(f"正在同步並解析 {date_str} 的經濟部行程資料..."):
+        results = get_moea_schedule(target_url, date_str)
+        
+        if results:
+            df = pd.DataFrame(results)
+            st.success(f"查詢成功！已完成 {date_str} 的行程解析。")
+            st.dataframe(df, use_container_width=True, hide_index=False)
+            
+            csv_data = df.to_csv(index=False, encoding="utf-8-sig")
+            st.download_button(
+                label="匯出此表格為 CSV",
+                data=csv_data,
+                file_name=f"經濟部行程_{date_str}.csv",
+                mime="text/csv"
+            )
+        else:
+            df_empty = pd.DataFrame([{
+                "時間": "-",
+                "類別": "-",
+                "行程內容": "無公開行程",
+                "地點": "-",
+                "備註說明": "-"
+            }])
+            st.warning(f"於 {date_str} 未偵測到任何公開行程。")
+            st.dataframe(df_empty, use_container_width=True)
+else:
+    st.info("請於左側設定抓取日期後，點擊「開始同步並篩選資料」按鈕。")
